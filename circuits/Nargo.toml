@@ -1,6 +1,11 @@
 [package]
-name = "circuits"
+name = "zk_agent_using_pinion_os"
 type = "bin"
-authors = [""]
+authors = ["masaun"]
 
 [dependencies]
+# @dev - Binary Merkle Root library by zk-kit.noir
+binary_merkle_root = { git = "https://github.com/privacy-scaling-explorations/zk-kit.noir", tag = "binary-merkle-root-v0.0.1", directory = "packages/binary-merkle-root" }
+
+# @dev - Poseidon hash function library
+poseidon = { tag = "v0.2.3", git = "https://github.com/noir-lang/poseidon" }
