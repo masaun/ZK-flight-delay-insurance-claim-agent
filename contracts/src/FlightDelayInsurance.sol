@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import { FlightDelayInsuranceVerifier } from "./circuits/FlightDelayInsuranceVerifier.sol";
 
@@ -18,10 +18,10 @@ contract FlightDelayInsurance {
     mapping(uint256 => Policy) public policies;
 
     // @dev - Store a given Policy Tree Root for each policyId, which will be used to verify the ZK proof for insurance claims. The policyTreeRoot is a hash that represents the specific insurance policy the user purchased, and it will be used in the ZK circuit to verify that the claim corresponds to the correct policy without revealing sensitive information about the policy on-chain.
-    mapping(uint256 policyId => bytes32[]) public policyTreeRoots;
+    mapping(uint256 => bytes32) public policyTreeRoots;
 
     constructor(address _verifier) {
-        verifier = IVerifier(_verifier);
+        verifier = FlightDelayInsuranceVerifier(_verifier);
     }
 
     function buyPolicy(
@@ -47,8 +47,8 @@ contract FlightDelayInsurance {
 
     function claim(
         uint256 policyId,
-        bytes calldata proof,
-        uint256[] calldata publicInputs
+        bytes calldata proof, 
+        bytes32[] calldata publicInputs
     ) external {
 
         Policy storage p = policies[policyId];
@@ -57,7 +57,7 @@ contract FlightDelayInsurance {
         require(p.holder == msg.sender, "Not holder");
 
         require(
-            verifier.verify(proof, publicInputs),
+            verifier.verifyFlightDelayInsuranceProof(proof, publicInputs),
             "Invalid proof"
         );
 
