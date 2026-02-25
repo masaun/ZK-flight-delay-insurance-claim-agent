@@ -1,5 +1,5 @@
 [package]
-name = "zk_agent_using_pinion_os"
+name = "flight_delay_insurance"
 type = "bin"
 authors = ["masaun"]
 

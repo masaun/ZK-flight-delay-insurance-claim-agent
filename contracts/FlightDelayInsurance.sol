@@ -22,15 +22,21 @@ contract FlightDelayInsurance {
 
     mapping(uint256 => Policy) public policies;
 
+    // @dev - Store a given Policy Tree Root for each policyId, which will be used to verify the ZK proof for insurance claims. The policyTreeRoot is a hash that represents the specific insurance policy the user purchased, and it will be used in the ZK circuit to verify that the claim corresponds to the correct policy without revealing sensitive information about the policy on-chain.
+    mapping(uint256 policyId => bytes32[]) public policyTreeRoots;
+
     constructor(address _verifier) {
         verifier = IVerifier(_verifier);
     }
 
     function buyPolicy(
+        bytes32 policyTreeRoot,
         uint256 policyId,
         uint256 coverageStart,
         uint256 coverageEnd
     ) external payable {
+        // TODO: Store a given Policy Tree Root        
+        policyTreeRoots[policyId] = policyTreeRoot;
 
         require(policies[policyId].holder == address(0));
         require(msg.value > 0);

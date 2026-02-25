@@ -33,31 +33,45 @@ use utils::constants::{
 
 // @dev - The PrivateInputs struct, which store the private inputs for the ZK circuit
 pub struct PrivateInputs {
-    // TODO
+    /// Private inputs related to the insurance claim
+    passenger_name_hash: Field,
+    ticket_number_hash: Field,
+    flight_number_hash: Field,
+    salt: Field,
+    /// The passenger_hash is a hash of the passenger's identity information, which can be used to verify the passenger's identity without revealing their personal information. This can be useful for privacy-preserving claims processing, where we want to ensure that the claim is being made by the legitimate passenger without exposing their identity on-chain.
+    passenger_hash: Field,
+    /// The scheduled and actual arrival times are used to calculate the delay and determine if the claim is valid based on the delay threshold specified in the insurance policy. By including these as private inputs, we can verify the claim without revealing the exact arrival times on-chain, thus preserving the passenger's privacy.
+    scheduled_arrival: u32,
+    actual_arrival: u32,
 }
 
 /** 
  * @title - Flight Delay Insurance circuit
  */
 fn main(
-    // ---------- Private Inputs ----------
-    passenger_name_hash: Field,
-    ticket_number_hash: Field,
-    flight_number_hash: Field,
-    salt: Field,
-
-    passenger_hash: Field,
-
-    scheduled_arrival: u32,
-    actual_arrival: u32,
-
-    // ---------- Public Inputs ----------
-    policy_tree_root: Field,
-    policy_id: u32,  // @dev - This policy_id, which passengers bought, should come from the "policies" mapping storage of the FlightDelayInsurance contract, which maps to the specific insurance policy the user purchased 
-    coverage_start: u32,
-    coverage_end: u32,
-    delay_threshold: u32
+    private_inputs: PrivateInputs,
+    public_inputs: PublicInputs
 ) -> pub PublicOutputs {
+    // ---------- Private Inputs ----------
+    let passenger_name_hash = private_inputs.passenger_name_hash;
+    let ticket_number_hash = private_inputs.ticket_number_hash;
+    let flight_number_hash = private_inputs.flight_number_hash;
+    let salt = private_inputs.salt;
+    
+    let passenger_hash = private_inputs.passenger_hash;
+
+    let scheduled_arrival = private_inputs.scheduled_arrival;
+    let actual_arrival = private_inputs.actual_arrival;
+
+    // ---------- Public Inputs ----------s
+    let policy_tree_root = public_inputs.policy_tree_root;
+    let policy_id = public_inputs.policy_id;
+    let coverage_start = public_inputs.coverage_start;
+    let coverage_end = public_inputs.coverage_end;
+    let delay_threshold = public_inputs.delay_threshold;
+
+
+
     // Prevent negative delay
     assert(actual_arrival >= scheduled_arrival);
 
