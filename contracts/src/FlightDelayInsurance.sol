@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IVerifier {
-    function verify(
-        bytes calldata proof,
-        uint256[] calldata publicInputs
-    ) external view returns (bool);
-}
+import { FlightDelayInsuranceVerifier } from "./circuits/FlightDelayInsuranceVerifier.sol";
 
 contract FlightDelayInsurance {
 
-    IVerifier public verifier;
+    FlightDelayInsuranceVerifier public verifier;
 
     struct Policy {
         address holder;
