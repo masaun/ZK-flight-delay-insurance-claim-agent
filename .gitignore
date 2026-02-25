@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# ZK circuit
+target
+
 # Node modules
 node_modules/
 package-lock.json

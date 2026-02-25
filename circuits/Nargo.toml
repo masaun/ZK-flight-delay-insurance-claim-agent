@@ -1,7 +1,8 @@
 [package]
-name = "zk_agent_using_pinion_os"
+name = "flight_delay_insurance"
 type = "bin"
 authors = ["masaun"]
+version = "0.0.1"
 
 [dependencies]
 # @dev - Binary Merkle Root library by zk-kit.noir

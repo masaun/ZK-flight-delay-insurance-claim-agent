@@ -68,4 +68,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+/**
+ * @notice - Run the main function
+ */
+const result = await main().catch(console.error);
