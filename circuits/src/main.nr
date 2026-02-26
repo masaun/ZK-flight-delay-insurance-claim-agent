@@ -67,6 +67,9 @@ fn main(
     let scheduled_arrival = private_inputs.scheduled_arrival;
     let actual_arrival = private_inputs.actual_arrival;
 
+    let merkle_proof_indices = private_inputs.merkle_proof_indices;
+    let merkle_proof_siblings = private_inputs.merkle_proof_siblings;
+
     // ---------- Public Inputs ----------s
     let policy_tree_root = public_inputs.policy_tree_root;
     let policy_id = public_inputs.policy_id;
@@ -108,9 +111,11 @@ fn main(
     ]);
 
     // 5-2. Compute the expected policy root (in the merkle root of the policy list) using the policy commitment and the Merkle proof. This will be used to verify that the policy commitment is included in the committed policy root.
-    // NOTE: Merkle proof verification is temporarily disabled to allow ZKP generation testing. 
-    // The merkle tree implementations between Noir circuit and @zk-kit/imt need to be synchronized.
-    // For production, this should be properly integrated with matching tree implementations.
+    // TODO: Merkle proof verification currently disabled due to incompatibility between @zk-kit/imt and Noir's binary_merkle_root
+    // The implementations compute different roots even with same inputs. This needs to be resolved by:
+    // 1. Using identical hash functions and tree structure
+    // 2. Potentially using a custom merkle tree implementation that's compatible with both
+    // 3. Or syncing to use only Noir for tree computations
     // let expected_policy_tree_root = compute_merkle_root(
     //     policy_commitment,
     //     MERKLE_PROOF_LENGTH,
@@ -119,6 +124,7 @@ fn main(
     // );
 
     // 5-3. Bind to committed policy root to ensure the policy commitment is included in the committed policy root
+    // For now, we skip this verification to allow testing proof generation infrastructure
     // assert(policy_tree_root == expected_policy_tree_root, "Policy root does not match the committed root");
 
     // 6. Compute the nullifier hash to prevent double factoring

@@ -68,6 +68,12 @@ validate_deployment() {
 }
 
 # Function to load environment variables
+#
+# The script sources the contracts/.env file and exports any variables it defines
+# so they are available to the deployment commands.  If you run the forge command
+# yourself, make sure to `source contracts/.env` or export the key manually (see
+# the README for examples) – otherwise the shell will complain that ``--private-\
+# key`` has no value.
 load_env() {
     if [ ! -f "$ENV_FILE" ]; then
         print_error ".env file not found at $ENV_FILE"
@@ -75,10 +81,13 @@ load_env() {
     fi
     
     print_status "Loading environment variables from .env..."
+    # export everything in .env so that subprocesses (forge, node, etc.) see them
+    set -a
     source "$ENV_FILE" || {
         print_error "Failed to source .env file"
         exit 1
     }
+    set +a
     
     if [ -z "$DEPLOYER_PRIVATE_KEY" ]; then
         print_error "DEPLOYER_PRIVATE_KEY not set in .env"
@@ -530,6 +539,11 @@ usage() {
 # Parse command line arguments
 SKIP_VERIFICATION=false
 DRY_RUN=false
+
+# If the user runs this script directly and wants to deploy manually they can
+# source the .env themselves, e.g.:
+#    set -a && source "$CONTRACTS_DIR/.env" && set +a
+# This script will call load_env() below which already exports variables.
 
 while [ $# -gt 0 ]; do
     case $1 in
