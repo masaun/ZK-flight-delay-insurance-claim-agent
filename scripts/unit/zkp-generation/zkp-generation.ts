@@ -206,11 +206,10 @@ export const testCreateMerkleProof = (): boolean => {
 
 /**
  * Test 7: Generate a ZK proof for flight delay insurance
- * Note: This test requires a valid circuit artifact and working Noir setup
- * Skipping actual proof generation for now - can be tested with full circuit deployment
+ * This test generates a proof off-chain using @noir-lang/noir_js and @aztec/bb.js
  */
 export const testGenerateZKProof = async (): Promise<boolean> => {
-  console.log("\nTest 7: Verifying ZK proof generation setup...");
+  console.log("\nTest 7: Generating ZK proof off-chain...");
   try {
     // Create merkle tree and insert a policy commitment
     const tree = createMerkleTree();
@@ -248,13 +247,35 @@ export const testGenerateZKProof = async (): Promise<boolean> => {
       return false;
     }
     
-    console.log("✓ ZK proof generation setup verified");
-    console.log(`  Policy Tree Root: ${publicInputs.policyTreeRoot}`);
-    console.log(`  Passenger Hash: ${privateInputs.passengerHash}`);
-    console.log("  ℹ Full proof generation requires circuit deployment and Noir environment");
+    console.log("  ℹ Policy Commitment: 0x" + commitment.toString(16).substring(0, 16) + "...");
+    console.log("  ℹ Passenger Hash:", privateInputs.passengerHash);
+    console.log("  ℹ Delay Threshold:", publicInputs.delayThreshold, "minutes");
     
-    // Note: Full proof generation would be:
-    // const proofResult = await generateProof(privateInputs, publicInputs, tree);
+    console.log("\n  🔐 Generating proof off-chain with @noir-lang/noir_js & @aztec/bb.js...");
+    console.log("  This may take a moment...\n");
+    
+    // @dev - Generate the actual proof
+    const proofResult = await generateProof(privateInputs, publicInputs, tree);
+    
+    console.log("✓ ZK proof generated successfully!");
+    console.log("\n  📊 Proof Outputs:");
+    console.log(`    Policy Tree Root: ${proofResult.publicOutputs.policyTreeRoot}`);
+    console.log(`    Nullifier Hash: ${proofResult.publicOutputs.nullifierHash}`);
+    
+    // Calculate proof size - handle different proof formats
+    let proofSize = "unknown";
+    if (proofResult.proof) {
+      if (typeof proofResult.proof === 'string') {
+        proofSize = (proofResult.proof.length / 2).toString(); // hex string to bytes
+      } else if (proofResult.proof instanceof Uint8Array) {
+        proofSize = proofResult.proof.length.toString();
+      } else if (typeof proofResult.proof.length === 'number') {
+        proofSize = proofResult.proof.length.toString();
+      } else if (typeof proofResult.proof === 'object') {
+        proofSize = JSON.stringify(proofResult.proof).length.toString();
+      }
+    }
+    console.log(`    Proof Size: ${proofSize} bytes`);
     
     return true;
   } catch (error) {
