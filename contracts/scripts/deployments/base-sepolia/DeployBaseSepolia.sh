@@ -46,6 +46,27 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+# Function to validate deployment on-chain
+validate_deployment() {
+    local CONTRACT_ADDR=$1
+    local CONTRACT_NAME=$2
+    
+    print_status "Validating $CONTRACT_NAME deployment at $CONTRACT_ADDR..."
+    
+    # Check if address has contract code on BASE Sepolia
+    local CODE=$(cast code "$CONTRACT_ADDR" --rpc-url "$BASE_SEPOLIA_RPC_URL" 2>/dev/null || echo "")
+    
+    if [ -z "$CODE" ] || [ "$CODE" = "0x" ]; then
+        print_error "❌ $CONTRACT_NAME NOT deployed at $CONTRACT_ADDR (no contract code found)"
+        return 1
+    else
+        # Show bytecode length as confirmation
+        local CODE_LENGTH=$((${#CODE} / 2))
+        print_success "✓ $CONTRACT_NAME deployed successfully (${CODE_LENGTH} bytes of code)"
+        return 0
+    fi
+}
+
 # Function to load environment variables
 load_env() {
     if [ ! -f "$ENV_FILE" ]; then
@@ -155,8 +176,7 @@ deploy_contracts() {
         --rpc-url $BASE_SEPOLIA_RPC_URL \
         --private-key $DEPLOYER_PRIVATE_KEY \
         --broadcast \
-        --skip-simulation \
-        -v"
+        -vvv"
     
     # Run with timeout if available
     print_status "Running deployment (this may take a few minutes)..."
@@ -193,10 +213,18 @@ deploy_contracts() {
     # Try multiple methods to extract addresses from the output
     print_status "Extracting contract addresses..."
     
-    # Method 1: Look for console.log output patterns
+    # Method 1: Look for console.log output patterns and transaction hashes
     HONK_VERIFIER_ADDR=$(grep -oE "0x[a-fA-F0-9]{40}" "$DEPLOY_LOG" | head -1)
     VERIFIER_ADDR=$(grep -oE "0x[a-fA-F0-9]{40}" "$DEPLOY_LOG" | head -2 | tail -1)
     INSURANCE_ADDR=$(grep -oE "0x[a-fA-F0-9]{40}" "$DEPLOY_LOG" | head -3 | tail -1)
+    
+    # Look for transaction hashes (which indicate successful deployment)
+    TX_COUNT=$(grep -c "Transaction" "$DEPLOY_LOG" || echo "0")
+    if [ "$TX_COUNT" -gt 0 ]; then
+        print_success "Found transaction records - deployment appears successful"
+    else
+        print_warning "No transaction records found - deployment may have failed"
+    fi
     
     # Method 2: If not found, look in broadcast directory
     if [ -z "$HONK_VERIFIER_ADDR" ]; then
@@ -232,18 +260,18 @@ deploy_contracts() {
         read -p "Enter FlightDelayInsuranceVerifier address: " VERIFIER_ADDR
         read -p "Enter FlightDelayInsurance address: " INSURANCE_ADDR
         
-        # Validate addresses entered by user
-        if ! [[ $HONK_VERIFIER_ADDR =~ ^0x[a-fA-F0-9]{40}$ ]]; then
+        # Validate addresses entered by user (POSIX compliant)
+        if ! echo "$HONK_VERIFIER_ADDR" | grep -qE '^0x[a-fA-F0-9]{40}$'; then
             print_error "Invalid HonkVerifier address format"
             rm -f "$DEPLOY_LOG"
             exit 1
         fi
-        if ! [[ $VERIFIER_ADDR =~ ^0x[a-fA-F0-9]{40}$ ]]; then
+        if ! echo "$VERIFIER_ADDR" | grep -qE '^0x[a-fA-F0-9]{40}$'; then
             print_error "Invalid FlightDelayInsuranceVerifier address format"
             rm -f "$DEPLOY_LOG"
             exit 1
         fi
-        if ! [[ $INSURANCE_ADDR =~ ^0x[a-fA-F0-9]{40}$ ]]; then
+        if ! echo "$INSURANCE_ADDR" | grep -qE '^0x[a-fA-F0-9]{40}$'; then
             print_error "Invalid FlightDelayInsurance address format"
             rm -f "$DEPLOY_LOG"
             exit 1
@@ -256,6 +284,29 @@ deploy_contracts() {
     echo "  HonkVerifier: $HONK_VERIFIER_ADDR"
     echo "  FlightDelayInsuranceVerifier: $VERIFIER_ADDR"
     echo "  FlightDelayInsurance: $INSURANCE_ADDR"
+    
+    # Validate on-chain deployment
+    echo ""
+    print_status "Verifying contracts are deployed on-chain..."
+    
+    VALIDATION_SUCCESS=true
+    validate_deployment "$HONK_VERIFIER_ADDR" "HonkVerifier" || VALIDATION_SUCCESS=false
+    validate_deployment "$VERIFIER_ADDR" "FlightDelayInsuranceVerifier" || VALIDATION_SUCCESS=false
+    validate_deployment "$INSURANCE_ADDR" "FlightDelayInsurance" || VALIDATION_SUCCESS=false
+    
+    if [ "$VALIDATION_SUCCESS" = false ]; then
+        print_error "One or more contracts failed on-chain validation"
+        echo ""
+        print_warning "The deployment script completed but contract code was not found on BASE Sepolia"
+        echo "Possible causes:"
+        echo "  1. Insufficient ETH balance for gas fees on deployer account"
+        echo "  2. Network connectivity issues or RPC endpoint problems"
+        echo "  3. Transaction failed silently (check BaseScan for failed transactions)"
+        echo "  4. Constructor errors that reverted the transaction"
+        echo ""
+        print_status "Review addresses on https://sepolia.basescan.org/"
+        echo ""
+    fi
     
     rm -f "$DEPLOY_LOG"
 }
@@ -480,7 +531,7 @@ usage() {
 SKIP_VERIFICATION=false
 DRY_RUN=false
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case $1 in
         -h|--help)
             usage

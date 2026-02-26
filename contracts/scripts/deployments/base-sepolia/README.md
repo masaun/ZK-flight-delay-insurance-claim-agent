@@ -45,6 +45,13 @@ cd scripts/deployments/base-sepolia
 bash DeployBaseSepolia.sh
 ```
 
+Or with sh (POSIX-compliant):
+
+```bash
+cd scripts/deployments/base-sepolia
+sh DeployBaseSepolia.sh
+```
+
 The script will automatically:
 1. Check and install Foundry dependencies (forge-std)
 2. Build all contracts
@@ -52,13 +59,10 @@ The script will automatically:
 4. Automatically update the `.env` file with deployed addresses
 5. Verify contracts on BaseScan (if `BASESCAN_API_KEY` is set)
 
-**Important:** Always use `bash` to run the script, not `sh`:
+**Compatible shells:** The script is POSIX-compliant and works with both `bash` and POSIX `sh`:
 ```bash
-# ✅ Correct
-bash DeployBaseSepolia.sh
-
-# ❌ Incorrect
-sh DeployBaseSepolia.sh
+bash DeployBaseSepolia.sh  # Works
+sh DeployBaseSepolia.sh    # Also works
 ```
 
 **Script Options:**
@@ -140,9 +144,9 @@ forge verify-contract --chain-id 84532 \
 
 ### Script Execution Issues
 
-#### Error: "command not found"
-- **Cause:** Running with `sh` instead of `bash`
-- **Solution:** Use `bash DeployBaseSepolia.sh` (NOT `sh DeployBaseSepolia.sh`)
+#### Error: "unexpected operator" or "bad substitution"
+- **Cause:** Running with incompatible shell
+- **Solution:** Script is now POSIX-compliant. Works with both `bash` and `sh`
 
 #### Error: "timeout: command not found"
 - **Cause:** Cross-platform timeout command not available
