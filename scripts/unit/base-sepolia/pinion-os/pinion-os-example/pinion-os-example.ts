@@ -23,7 +23,7 @@ if (resultEnv.error) {
 
 async function main() {
   const pinion = new PinionClient({
-    privateKey: process.env.USER_PRIVATE_KEY,
+    privateKey: process.env.USER_PRIVATE_KEY // @dev - NOTE: Only "Base Mainnet" would be allowed.
   });
 
   // Get the wallet address from the private key
