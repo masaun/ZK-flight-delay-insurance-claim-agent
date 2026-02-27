@@ -315,7 +315,18 @@ async function generateZKProofOffChain(): Promise<{
   console.log("╚══════════════════════════════════════════╝\n");
 
   const tree = createMerkleTree();
-  const salt = generateRandomInt();
+
+  // ── Deterministic inputs ──────────────────────────────────────────────────
+  // salt and dummy sibling leaves MUST be fixed constants, not random values.
+  //
+  // Why: buyPolicy() stores policyTreeRoot on-chain in Step 2.5.  claim() then
+  // submits a proof whose public output contains that same root.  If salt or
+  // the sibling leaves are random, every run produces a different root — the
+  // proof root never matches what is stored on-chain from a previous run.
+  //
+  // For a real application each user's salt would be stored in a database; for
+  // this E2E test we use a fixed value so the tree is always identical.
+  const salt   = 936363922n; // fixed — change only to re-register a new policy
   const policyId = 1;
 
   const passengerNameHash = BigInt(
@@ -332,8 +343,14 @@ async function generateZKProofOffChain(): Promise<{
   const commitment = generatePolicyCommitment(policyId, passengerHash, salt);
   insertLeaf(tree, commitment);
 
-  for (let i = 0; i < 3; i++) {
-    insertLeaf(tree, generateRandomInt());
+  // Fixed dummy sibling commitments — must be identical every run
+  const DUMMY_LEAVES = [
+    1234567890123456789n,
+    9876543210987654321n,
+    1122334455667788990n,
+  ];
+  for (const leaf of DUMMY_LEAVES) {
+    insertLeaf(tree, leaf);
   }
 
   const policyTreeRoot = getMerkleRoot(tree);
@@ -475,6 +492,9 @@ async function buyPolicyOnChain(
 
   if (existingHolder.toLowerCase() !== ZERO_ADDRESS && existingHolder.toLowerCase() === account.address.toLowerCase()) {
     console.log(`   Policy #${policyId} already owned by this wallet — skipping buyPolicy().\n`);
+    console.log(`   ℹ  If claim() still reverts with "Invalid proof", the stored policyTreeRoot`);
+    console.log(`      may be from a previous run with a different salt/tree.`);
+    console.log(`      In that case increment policyId (currently ${policyId}) to register a fresh policy.\n`);
     return;
   }
 
