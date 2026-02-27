@@ -1,5 +1,5 @@
 echo "Show the size of the ZK circuit..."
-bb gates -b target/zk_agent.json | grep "circuit"
+bb gates -b target/flight_delay_insurance.json | grep "circuit"
 
 # Scheme is: ultra_honk, num threads: 8
 #         "circuit_size": ?
