@@ -19,13 +19,35 @@ import {
   ProofResult,
 } from "../../circuits/zk-prover/zk-prover.ts";
 
+// @dev - Node modules for file system and path handling, used to load .env files from the contracts directory
+import { config } from "dotenv";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+// ─────────────────────────────────────────────
+// Load .env files
+// ─────────────────────────────────────────────
+// Load environment variables from contracts/.env
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const envPath = resolve(__dirname, "../../../contracts/.env");
+
+//console.log("📂 Loading environment from:", envPath);
+const result = config({ path: envPath });
+
+if (result.error) {
+  console.error("❌ Error loading .env file:", result.error);
+  throw result.error;
+}
+
+
 // ─────────────────────────────────────────────
 // Contract Addresses (BASE Sepolia)
 // ─────────────────────────────────────────────
 const HONK_VERIFIER_ADDRESS =
   (process.env.HONK_VERIFIER_ON_BASE_SEPOLIA as Hex) ?? "";
 const FLIGHT_DELAY_INSURANCE_VERIFIER_ADDRESS =
-  (process.env.FLIGHT_DELAY_INSURANCE_Verifier_ON_BASE_SEPOLIA as Hex) ?? "";
+  (process.env.FLIGHT_DELAY_INSURANCE_VERIFIER_ON_BASE_SEPOLIA as Hex) ?? "";
 const FLIGHT_DELAY_INSURANCE_ADDRESS =
   (process.env.FLIGHT_DELAY_INSURANCE_ON_BASE_SEPOLIA as Hex) ?? "";
 
@@ -153,9 +175,9 @@ function buildPublicInputs(proofResult: ProofResult): Hex[] {
 // ─────────────────────────────────────────────
 
 function buildClients(rpcUrl: string) {
-  const privateKey = process.env.PRIVATE_KEY as Hex;
+  const privateKey = process.env.USER_PRIVATE_KEY as Hex;
   if (!privateKey) {
-    throw new Error("PRIVATE_KEY env var is required for on-chain transactions");
+    throw new Error("USER_PRIVATE_KEY env var is required for on-chain transactions");
   }
 
   const account = privateKeyToAccount(privateKey);
@@ -408,7 +430,7 @@ async function main(): Promise<void> {
     missingEnv.push("FLIGHT_DELAY_INSURANCE_Verifier_ON_BASE_SEPOLIA");
   if (!FLIGHT_DELAY_INSURANCE_ADDRESS)
     missingEnv.push("FLIGHT_DELAY_INSURANCE_ON_BASE_SEPOLIA");
-  if (!process.env.PRIVATE_KEY) missingEnv.push("PRIVATE_KEY");
+  if (!process.env.USER_PRIVATE_KEY) missingEnv.push("USER_PRIVATE_KEY");
 
   if (missingEnv.length > 0) {
     console.error("\n✗ Missing required environment variables:");
