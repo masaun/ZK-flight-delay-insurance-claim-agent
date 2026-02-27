@@ -587,6 +587,7 @@ async function submitClaimOnChain(
     abi: FLIGHT_DELAY_INSURANCE_ABI,
     functionName: "claim",
     args: [BigInt(policyId), proofHex, publicInputsHex],
+    gas: 6_000_000n
   });
 
   console.log(`   Transaction submitted: ${txHash}`);
