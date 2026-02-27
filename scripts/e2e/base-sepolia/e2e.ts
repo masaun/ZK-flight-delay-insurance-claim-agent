@@ -1,4 +1,16 @@
 import { createPublicClient, createWalletClient, http, toHex, type Hex } from "viem";
+
+// ─────────────────────────────────────────────
+// Library version notes
+// @aztec/bb.js           ^3.0.0-devnet.6-patch.1
+// @noir-lang/noir_js      1.0.0-beta.18
+//
+// UltraHonkBackend.generateProof() returns:
+//   { proof: Uint8Array, publicInputs: string[] }
+//
+//   proof        – raw bytes, NO length prefix.  Encode directly as `bytes`.
+//   publicInputs – decimal string per field element, circuit declaration order.
+// ─────────────────────────────────────────────
 import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { IMT } from "@zk-kit/imt";
@@ -201,20 +213,20 @@ function toBytes32(value: bigint | string): Hex {
 }
 
 /**
- * Strip the 4-byte length prefix that bb.js prepends to raw proof bytes,
- * then encode as a 0x-prefixed hex string.
+ * Encode proof bytes for on-chain calldata.
  *
- * bb.js (NoirJS UltraHonk backend) prepends 4 bytes representing the number
- * of 32-byte field elements in the proof.  The on-chain verifier expects raw
- * proof bytes with no prefix, so we strip it before encoding.
+ * @aztec/bb.js ^3.0.0-devnet.6-patch.1 returns a plain Uint8Array with
+ * NO length prefix.  We mirror the pattern used in the reference e2e script
+ * (doc 6): Buffer.from(proof).toString('hex') — this is the proven-correct
+ * encoding for this exact library version.
+ *
+ * Expected size: calculateProofSize(LOG_N=13) * 32 = 246 * 32 = 7872 bytes.
  */
 function proofToHex(proof: Uint8Array | string): Hex {
   if (typeof proof === "string") {
-    return proof.startsWith("0x") ? (proof as Hex) : (`0x${proof}` as Hex);
+    return (proof.startsWith("0x") ? proof : `0x${proof}`) as Hex;
   }
-  // Strip the 4-byte length prefix added by bb.js
-  const raw = proof.length > 4 ? proof.slice(4) : proof;
-  return toHex(raw);
+  return `0x${Buffer.from(proof).toString("hex")}` as Hex;
 }
 
 /**
@@ -234,14 +246,28 @@ function proofToHex(proof: Uint8Array | string): Hex {
  * Adjust the two slots below to match the exact order your Noir circuit
  * declares its public outputs (check circuits/target/<name>.json → abi).
  */
+/**
+ * Convert a single public-input field element (decimal string or bigint) to a
+ * 0x-prefixed bytes32 hex string.
+ *
+ * Mirrors the pattern from the reference e2e (doc 6):
+ *   BigInt(input).toString(16).padStart(64, "0")
+ */
+function fieldToBytes32(value: string | bigint): Hex {
+  return `0x${BigInt(value).toString(16).padStart(64, "0")}` as Hex;
+}
+
 function buildPublicInputs(proofResult: ProofResult): Hex[] {
   const { publicOutputs } = proofResult;
 
-  // Exactly 2 elements: the circuit's public outputs (NOT the private inputs
-  // re-stated, and NOT the pairing points which live in the proof bytes).
+  // Exactly 2 elements — must equal NUMBER_OF_PUBLIC_INPUTS - PAIRING_POINTS_SIZE
+  // = 18 - 16 = 2.  The verifier reverts with PublicInputsLengthWrong() otherwise.
+  //
+  // Order must match the circuit's `pub` return declarations.
+  // Verify against circuits/target/<name>.json → abi.parameters[*].visibility=="public"
   return [
-    toBytes32(BigInt(publicOutputs.policyTreeRoot)),
-    toBytes32(BigInt(publicOutputs.nullifierHash)),
+    fieldToBytes32(publicOutputs.policyTreeRoot),
+    fieldToBytes32(publicOutputs.nullifierHash),
   ];
 }
 
@@ -350,8 +376,7 @@ async function generateZKProofOffChain(): Promise<{
   const proofBytes = proofResult.proof.proof as Uint8Array;
   console.log("\n✓ ZK proof generated!");
   console.log(`   Nullifier Hash     : ${proofResult.publicOutputs.nullifierHash}`);
-  console.log(`   Raw proof size     : ${proofBytes.length} bytes`);
-  console.log(`   Stripped size      : ${proofBytes.length > 4 ? proofBytes.length - 4 : proofBytes.length} bytes\n`);
+  console.log(`   Proof size         : ${proofBytes.length} bytes (expected 7872 for LOG_N=13)\n`);
 
   return {
     proofResult,
