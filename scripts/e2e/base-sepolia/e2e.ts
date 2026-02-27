@@ -429,6 +429,90 @@ async function verifyZKProofOnChain(
 }
 
 // ─────────────────────────────────────────────
+// Step 2.5 – Buy Policy On-Chain (if not already purchased)
+// ─────────────────────────────────────────────
+
+/**
+ * Calls FlightDelayInsurance.buyPolicy() so that msg.sender is registered as
+ * the policy holder before claim() is called.
+ *
+ * Idempotent: if policies[policyId].holder already equals the wallet address
+ * the step is skipped to avoid the "policy already exists" revert.
+ *
+ * buyPolicy() is payable — the value sent becomes the premium.  The contract
+ * stores payoutAmount = msg.value * 3, so send at least 1 wei.  For a
+ * testnet E2E we send a small fixed amount (0.001 ETH).
+ */
+async function buyPolicyOnChain(
+  policyId: number,
+  policyTreeRoot: bigint,
+  coverageStart: number,
+  coverageEnd: number,
+  account: ReturnType<typeof privateKeyToAccount>,
+  publicClient: ReturnType<typeof createPublicClient>,
+  walletClient: ReturnType<typeof createWalletClient>
+): Promise<void> {
+  console.log("\n╔══════════════════════════════════════════╗");
+  console.log("║  STEP 2.5: Buy Policy On-Chain           ║");
+  console.log("╚══════════════════════════════════════════╝\n");
+
+  // Check whether this wallet already owns the policy
+  const existing = await publicClient.readContract({
+    address: FLIGHT_DELAY_INSURANCE_ADDRESS,
+    abi: FLIGHT_DELAY_INSURANCE_ABI,
+    functionName: "policies",
+    args: [BigInt(policyId)],
+  });
+
+  if (existing.holder !== "0x0000000000000000000000000000000000000000" && existing.holder.toLowerCase() === account.address.toLowerCase()) {
+    console.log(`   Policy #${policyId} already owned by this wallet — skipping buyPolicy().\n`);
+    return;
+  }
+
+  if (existing.holder !== "0x0000000000000000000000000000000000000000") {
+    throw new Error(
+      `Policy #${policyId} is already owned by a different address (${existing.holder}). ` +
+      `Use a different policyId or the wallet that purchased this policy.`
+    );
+  }
+
+  const policyTreeRootBytes32 = `0x${policyTreeRoot.toString(16).padStart(64, "0")}` as Hex;
+  const premium = 1_000_000_000_000_000n; // 0.001 ETH in wei
+
+  console.log(`→ Calling FlightDelayInsurance.buyPolicy() at ${FLIGHT_DELAY_INSURANCE_ADDRESS}…`);
+  console.log(`   Policy ID      : ${policyId}`);
+  console.log(`   Policy Root    : ${policyTreeRootBytes32.slice(0, 18)}…`);
+  console.log(`   Coverage Start : ${new Date(coverageStart * 1000).toISOString()}`);
+  console.log(`   Coverage End   : ${new Date(coverageEnd   * 1000).toISOString()}`);
+  console.log(`   Premium (value): ${premium} wei (0.001 ETH)\n`);
+
+  const txHash = await walletClient.writeContract({
+    address: FLIGHT_DELAY_INSURANCE_ADDRESS,
+    abi: FLIGHT_DELAY_INSURANCE_ABI,
+    functionName: "buyPolicy",
+    args: [policyTreeRootBytes32, BigInt(policyId), BigInt(coverageStart), BigInt(coverageEnd)],
+    value: premium,
+  });
+
+  console.log(`   Transaction submitted: ${txHash}`);
+  console.log("   Waiting for confirmation…");
+
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash: txHash,
+    confirmations: 1,
+  });
+
+  if (receipt.status === "success") {
+    console.log(`\n✓ Policy purchased successfully!`);
+    console.log(`   Block    : ${receipt.blockNumber}`);
+    console.log(`   Gas Used : ${receipt.gasUsed}`);
+    console.log(`   Explorer : https://sepolia.basescan.org/tx/${txHash}\n`);
+  } else {
+    throw new Error(`buyPolicy() transaction reverted. Hash: ${txHash}`);
+  }
+}
+
+// ─────────────────────────────────────────────
 // Step 3 – Submit Claim On-Chain
 // ─────────────────────────────────────────────
 
@@ -516,10 +600,10 @@ async function main(): Promise<void> {
   console.log(`   FDI Verifier: ${FLIGHT_DELAY_INSURANCE_VERIFIER_ADDRESS}`);
   console.log(`   FDI Contract: ${FLIGHT_DELAY_INSURANCE_ADDRESS}\n`);
 
-  const { publicClient, walletClient } = buildClients(rpcUrl);
+  const { publicClient, walletClient, account } = buildClients(rpcUrl);
 
   // ── Step 1: Generate ZK proof off-chain ──
-  const { proofResult, policyId } = await generateZKProofOffChain();
+  const { proofResult, policyId, publicInputsForBuy } = await generateZKProofOffChain();
 
   // ── Step 2: Verify proof on-chain (read-only) ──
   const proofIsValid = await verifyZKProofOnChain(proofResult, publicClient);
@@ -527,6 +611,17 @@ async function main(): Promise<void> {
     console.error("✗ On-chain verification failed. Aborting claim submission.\n");
     process.exit(1);
   }
+
+  // ── Step 2.5: Buy the policy so this wallet is registered as holder ──
+  await buyPolicyOnChain(
+    policyId,
+    publicInputsForBuy.policyTreeRoot,
+    publicInputsForBuy.coverageStart,
+    publicInputsForBuy.coverageEnd,
+    account,
+    publicClient,
+    walletClient,
+  );
 
   // ── Step 3: Submit claim on-chain ──
   await submitClaimOnChain(proofResult, policyId, publicClient, walletClient);
