@@ -660,6 +660,17 @@ async function main(): Promise<void> {
     walletClient,
   );
 
+  // @dev - Check the stored policyTreeRoot on-chain before submitting the claim, to confirm it matches the proof's public output root.  If this check fails, the claim will fail with "Invalid proof" because the proof commits to a different root than what the contract has stored for this policyId.
+  const storedRoot = await publicClient.readContract({
+    address: FLIGHT_DELAY_INSURANCE_ADDRESS,
+    abi: FLIGHT_DELAY_INSURANCE_ABI,
+    functionName: "policyTreeRoots",
+    args: [BigInt(policyId)],
+  });
+  console.log("Stored root  :", storedRoot);
+  console.log("Proof root   :", fieldToBytes32(proofResult.publicOutputs.policyTreeRoot));
+  console.log("Match?       :", storedRoot === fieldToBytes32(proofResult.publicOutputs.policyTreeRoot));
+
   // ── Step 3: Submit claim on-chain ──
   await submitClaimOnChain(proofResult, policyId, publicClient, walletClient);
 
