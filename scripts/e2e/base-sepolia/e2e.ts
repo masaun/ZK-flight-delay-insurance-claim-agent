@@ -456,22 +456,28 @@ async function buyPolicyOnChain(
   console.log("║  STEP 2.5: Buy Policy On-Chain           ║");
   console.log("╚══════════════════════════════════════════╝\n");
 
-  // Check whether this wallet already owns the policy
-  const existing = await publicClient.readContract({
+  // Check whether this wallet already owns the policy.
+  // viem returns Solidity struct/tuple outputs as a plain array when the
+  // function is defined with named outputs — index into it positionally:
+  //   [0] holder, [1] payoutAmount, [2] coverageStart, [3] coverageEnd, [4] claimed
+  const existingRaw = await publicClient.readContract({
     address: FLIGHT_DELAY_INSURANCE_ADDRESS,
     abi: FLIGHT_DELAY_INSURANCE_ABI,
     functionName: "policies",
     args: [BigInt(policyId)],
-  });
+  }) as readonly [string, bigint, bigint, bigint, boolean];
 
-  if (existing.holder !== "0x0000000000000000000000000000000000000000" && existing.holder.toLowerCase() === account.address.toLowerCase()) {
+  const [existingHolder] = existingRaw;
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  if (existingHolder.toLowerCase() !== ZERO_ADDRESS && existingHolder.toLowerCase() === account.address.toLowerCase()) {
     console.log(`   Policy #${policyId} already owned by this wallet — skipping buyPolicy().\n`);
     return;
   }
 
-  if (existing.holder !== "0x0000000000000000000000000000000000000000") {
+  if (existingHolder.toLowerCase() !== ZERO_ADDRESS) {
     throw new Error(
-      `Policy #${policyId} is already owned by a different address (${existing.holder}). ` +
+      `Policy #${policyId} is already owned by a different address (${existingHolder}). ` +
       `Use a different policyId or the wallet that purchased this policy.`
     );
   }
@@ -530,15 +536,18 @@ async function submitClaimOnChain(
   const publicInputsHex = buildPublicInputs(proofResult);
 
   // Double-spend guard: read Policy.claimed via the `policies` mapping
+  // viem returns tuple outputs as a positional array: [holder, payoutAmount, coverageStart, coverageEnd, claimed]
   console.log(`→ Checking policy #${policyId} claim status on-chain…`);
-  const policy = await publicClient.readContract({
+  const policyRaw = await publicClient.readContract({
     address: FLIGHT_DELAY_INSURANCE_ADDRESS,
     abi: FLIGHT_DELAY_INSURANCE_ABI,
     functionName: "policies",
     args: [BigInt(policyId)],
-  });
+  }) as readonly [string, bigint, bigint, bigint, boolean];
 
-  if (policy.claimed) {
+  const [, , , , alreadyClaimed] = policyRaw;
+
+  if (alreadyClaimed) {
     console.log("⚠  Policy already claimed – skipping.\n");
     return;
   }
