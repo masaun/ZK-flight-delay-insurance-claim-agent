@@ -1,7 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "test:zkp": "tsx unit/zkp-generation/zkp-generation.ts"
+    "unit:generate-zkp": "tsx unit/zkp-generation/zkp-generation.ts",
+    "e2e:base-sepolia": "bun run ./e2e/base-sepolia/e2e.ts"
   },
   "dependencies": {
     "@aztec/bb.js": "^3.0.0-devnet.6-patch.1",
