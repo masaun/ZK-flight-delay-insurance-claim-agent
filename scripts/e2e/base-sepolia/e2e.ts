@@ -250,11 +250,14 @@ function proofToHex(proof: Uint8Array | string): Hex {
  * Convert a single public-input field element (decimal string or bigint) to a
  * 0x-prefixed bytes32 hex string.
  *
- * Mirrors the pattern from the reference e2e (doc 6):
- *   BigInt(input).toString(16).padStart(64, "0")
+ * Uses toHex(bn, { size: 32 }) — NOT padStart(64) — because Noir field
+ * elements are < BN254 scalar field order (~2^254) and their hex representation
+ * can legitimately exceed 64 characters, causing viem to throw
+ * AbiEncodingBytesSizeMismatchError(bytes39 vs bytes32).
+ * toHex with size:32 correctly takes the low 32 bytes.
  */
 function fieldToBytes32(value: string | bigint): Hex {
-  return `0x${BigInt(value).toString(16).padStart(64, "0")}` as Hex;
+  return toBytes32(typeof value === "string" ? BigInt(value) : value);
 }
 
 function buildPublicInputs(proofResult: ProofResult): Hex[] {
@@ -482,7 +485,12 @@ async function buyPolicyOnChain(
     );
   }
 
-  const policyTreeRootBytes32 = `0x${policyTreeRoot.toString(16).padStart(64, "0")}` as Hex;
+  // Use toBytes32() — NOT manual padStart — because policyTreeRoot is a Noir
+  // field element (< BN254 scalar field order ~2^254) whose hex representation
+  // can exceed 64 chars, causing a bytes39/bytes32 size mismatch in viem's
+  // ABI encoder.  toHex(bn, { size: 32 }) truncates to the low 32 bytes,
+  // which is the correct on-chain representation (field elements fit in 32 bytes).
+  const policyTreeRootBytes32 = toBytes32(policyTreeRoot);
   const premium = 1_000_000_000_000_000n; // 0.001 ETH in wei
 
   console.log(`→ Calling FlightDelayInsurance.buyPolicy() at ${FLIGHT_DELAY_INSURANCE_ADDRESS}…`);
