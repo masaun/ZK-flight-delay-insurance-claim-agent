@@ -77,7 +77,7 @@ contract PinionOsForkTest is Test {
     /// @dev pinionos.com payment recipient (replace with real address if known)
     /// For fork tests we deploy a mock recipient so we can assert balances.
     address internal constant PINION_PAYTO =
-        address(0xDEAD00000000000000000000000000000000BEEF);
+        address(0xf9c9A7735aaB3C665197725A3aFC095fE2635d09); // @dev - This is an example address.
 
     // ── Test accounts ─────────────────────────────────────────────────────────
 
