@@ -15,7 +15,11 @@ import {
   type PublicClient,
   type Address,
   type Hex,
+  encodeAbiParameters,
+  keccak256,
+  concat,
   toHex,
+  toBytes,
   parseEther,
 } from "viem";
 
@@ -23,7 +27,7 @@ import {
 // Constants — Base mainnet
 // ─────────────────────────────────────────────────────────────────────────────
 
-const USDC_ADDRESS: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDC_ADDRESS: Address  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const PINION_SKILL_COST      = 10_000n;       // $0.01 USDC (6 decimals)
 const PINION_UNLIMITED_COST  = 100_000_000n;  // $100 USDC (6 decimals)
 const PINION_PAYTO: Address  = "0xf9c9A7735aaB3C665197725A3aFC095fE2635d09";
@@ -31,32 +35,17 @@ const USER_PRIV_KEY: Hex     =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EIP-712 typed data definition for USDC TransferWithAuthorization
-// ─────────────────────────────────────────────────────────────────────────────
-
-const USDC_DOMAIN = {
-  name:              "USD Coin",
-  version:           "2",
-  chainId:           8453,          // Base mainnet
-  verifyingContract: USDC_ADDRESS,
-} as const;
-
-const TRANSFER_WITH_AUTHORIZATION_TYPES = {
-  TransferWithAuthorization: [
-    { name: "from",        type: "address" },
-    { name: "to",          type: "address" },
-    { name: "value",       type: "uint256" },
-    { name: "validAfter",  type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce",       type: "bytes32" },
-  ],
-} as const;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal USDC ABI
+// Minimal USDC ABI (includes DOMAIN_SEPARATOR for runtime fetch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const USDC_ABI = [
+  {
+    name: "DOMAIN_SEPARATOR",
+    type: "function",
+    stateMutability: "view",
+    inputs:  [],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
   {
     name: "balanceOf",
     type: "function",
@@ -98,52 +87,65 @@ const USDC_ABI = [
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EIP-3009 signing helper
+// EIP-3009 signing
 //
-// KEY FIX: Use account.signTypedData() instead of any manual digest construction.
+// THE FIX: Read DOMAIN_SEPARATOR() directly from the contract at runtime.
 //
-// All previous approaches failed because we manually computed the EIP-712 digest
-// and then tried to sign it raw — any subtle difference in encoding (padding,
-// name hash, version hash) causes "FiatTokenV2: invalid signature".
+// All previous approaches hard-coded domain parameters (name, version, chainId)
+// and recomputed the domain separator locally. Any mismatch — including the
+// chainId the EDR fork reports vs what we assume — causes "invalid signature".
 //
-// signTypedData() is the CORRECT approach:
-//  - viem handles the entire domain separator + struct hash + \x19\x01 encoding
-//  - It calls the USDC contract's actual EIP-712 domain specification
-//  - The output (v, r, s) is exactly what transferWithAuthorization expects
+// Solution: fetch the actual domainSeparator the contract uses, then build
+// the struct hash ourselves, and sign the resulting digest with a bare
+// secp256k1 sign (no EIP-191 prefix).
+//
+// This is the only approach guaranteed to match what the contract verifies,
+// regardless of what chainId the fork uses internally.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function signTransferWithAuthorization(params: {
-  privateKey:  Hex;
+const TRANSFER_TYPEHASH: Hex = keccak256(
+  toBytes(
+    "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+  )
+);
+
+/**
+ * Build the EIP-712 digest using the contract's actual on-chain DOMAIN_SEPARATOR.
+ * This sidesteps any chainId / name / version mismatch entirely.
+ */
+function buildDigest(params: {
+  domainSeparator: Hex;
   from:        Address;
   to:          Address;
   value:       bigint;
   validAfter:  bigint;
   validBefore: bigint;
   nonce:       Hex;
-}): Promise<{ v: number; r: Hex; s: Hex }> {
-  const { privateKeyToAccount } = await import("viem/accounts");
-  const account = privateKeyToAccount(params.privateKey);
+}): Hex {
+  const { domainSeparator, from, to, value, validAfter, validBefore, nonce } = params;
 
-  // signTypedData: viem computes \x19\x01 + domainSeparator + structHash internally
-  const sig = await account.signTypedData({
-    domain: USDC_DOMAIN,
-    types:  TRANSFER_WITH_AUTHORIZATION_TYPES,
-    primaryType: "TransferWithAuthorization",
-    message: {
-      from:        params.from,
-      to:          params.to,
-      value:       params.value,
-      validAfter:  params.validAfter,
-      validBefore: params.validBefore,
-      nonce:       params.nonce,
-    },
-  });
+  const structHash = keccak256(encodeAbiParameters(
+    [
+      { type: "bytes32" }, { type: "address" }, { type: "address" },
+      { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "bytes32" },
+    ],
+    [TRANSFER_TYPEHASH, from, to, value, validAfter, validBefore, nonce]
+  ));
 
-  // sig is 0x + 130 hex chars: r(32) + s(32) + v(1)
-  const r = `0x${sig.slice(2, 66)}`   as Hex;
-  const s = `0x${sig.slice(66, 130)}` as Hex;
-  const v = parseInt(sig.slice(130, 132), 16);
-  return { v, r, s };
+  return keccak256(concat(["0x1901", domainSeparator, structHash]));
+}
+
+/**
+ * Sign the digest with a bare secp256k1 sign — no EIP-191 prefix.
+ * viem's sign() from viem/accounts does this correctly for EIP-712.
+ */
+async function signDigest(
+  privateKey: Hex,
+  digest: Hex
+): Promise<{ v: number; r: Hex; s: Hex }> {
+  const { sign } = await import("viem/accounts");
+  const sig = await sign({ hash: digest, privateKey });
+  return { v: Number(sig.v), r: sig.r, s: sig.s };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,15 +162,27 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
 
   let userAddress:  Address;
   let publicClient: PublicClient;
+  let domainSeparator: Hex;  // fetched once from the live contract
 
   before(async () => {
     const { privateKeyToAccount } = await import("viem/accounts");
     userAddress  = privateKeyToAccount(USER_PRIV_KEY).address;
     publicClient = await viem.getPublicClient();
 
+    // ── Fetch the real DOMAIN_SEPARATOR from the contract ──────────────────
+    // This is the crucial fix: we use whatever the contract actually has,
+    // not what we compute from assumed parameters. If the EDR fork exposes
+    // a different chainId than 8453, this still works correctly.
+    domainSeparator = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi:     USDC_ABI,
+      functionName: "DOMAIN_SEPARATOR",
+    }) as Hex;
+    console.log("DOMAIN_SEPARATOR (on-chain):", domainSeparator);
+
+    // ── Seed user with ETH and USDC ────────────────────────────────────────
     await networkHelpers.setBalance(userAddress, parseEther("1"));
 
-    // Seed 200 USDC via whale impersonation (mirrors Foundry's deal())
     const whale: Address = "0x20FE51A9229EEf2cF8Ad9E89d91CAb9312cF3b7A";
     await networkHelpers.impersonateAccount(whale);
     await networkHelpers.setBalance(whale, parseEther("10"));
@@ -192,16 +206,17 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     console.log("USDC balance  :", usdcBal.toString());
   });
 
-  // ── Helper: simulate a single Pinion x402 skill payment ($0.01 USDC) ─────
+  // ── Helper ─────────────────────────────────────────────────────────────────
   async function simulatePinionSkillPayment(nonceIndex: number): Promise<void> {
     const nonce       = toHex(nonceIndex, { size: 32 }) as Hex;
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -242,11 +257,12 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO],
     });
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -283,11 +299,12 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     const nonce       = toHex(42, { size: 32 }) as Hex;
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -352,11 +369,12 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     const uBefore = await publicClient.readContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress] });
     const pBefore = await publicClient.readContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO] });
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_UNLIMITED_COST, validAfter: 0n, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -374,7 +392,6 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
 
     assert.equal(uAfter, uBefore - PINION_UNLIMITED_COST);
     assert.equal(pAfter, pBefore + PINION_UNLIMITED_COST);
-
     console.log("✅ Unlimited plan | $100 settled");
   });
 
@@ -385,16 +402,15 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     const { privateKeyToAccount } = await import("viem/accounts");
     const brokeAddress = privateKeyToAccount(brokeKey).address;
 
-    await networkHelpers.setBalance(brokeAddress, parseEther("1"));
-
     const nonce       = toHex(500, { size: 32 }) as Hex;
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: brokeKey,
+    const digest = buildDigest({
+      domainSeparator,
       from: brokeAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(brokeKey, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
 
@@ -413,11 +429,12 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     const nonce     = toHex(600, { size: 32 }) as Hex;
     const expiredTs = BigInt(Math.floor(Date.now() / 1000) - 10);
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore: expiredTs, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
 
@@ -453,17 +470,18 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
   it("Test 12 — validAfter: blocked before window, succeeds after time.increase", async () => {
     const nonce = toHex(700, { size: 32 }) as Hex;
 
-    // Use EVM block.timestamp — NOT Date.now() — as baseline
+    // Use EVM block.timestamp, not Date.now()
     const block      = await publicClient.getBlock();
     const evmNow     = block.timestamp;
     const validAfter  = evmNow + 3600n;
     const validBefore = evmNow + 7200n;
 
-    const { v, r, s } = await signTransferWithAuthorization({
-      privateKey: USER_PRIV_KEY,
+    const digest = buildDigest({
+      domainSeparator,
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter, validBefore, nonce,
     });
+    const { v, r, s } = await signDigest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
