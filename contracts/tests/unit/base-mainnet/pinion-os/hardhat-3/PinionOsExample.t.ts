@@ -1,26 +1,10 @@
 /**
- * @file  PinionOsForkTest.ts
+ * @file  PinionOsExample.t.ts
  * @title Hardhat 3 · Base mainnet fork test for Pinion OS x402 payment flow
- *
- * Mirrors the Foundry PinionOsForkTest.t.sol test suite, rewritten using:
- *   - Hardhat 3 (hre.network.connect)
- *   - viem  (public / wallet clients, EIP-712 signing)
- *   - node:test  (describe / it — Hardhat 3's recommended test runner)
- *   - hardhat-network-helpers  (setBalance, setStorageAt, time)
- *   - hardhat-viem-assertions  (revertWith)
- *
- * Skills tested (mirrors the Pinion OS TypeScript example):
- *   pinion.skills.wallet()        → x402 $0.01 USDC payment via EIP-3009
- *   pinion.skills.balance(addr)   → ETH + USDC balance reads
- *   pinion.skills.price("ETH")    → $0.01 USDC payment
- *   pinion.skills.chat(msg)       → $0.01 USDC payment
- *   pinion.skills.trade(...)      → $0.01 USDC payment
- *   pinion.skills.fund(addr)      → $0.01 USDC payment
- *   pinion.skills.unlimited()     → $100 USDC one-time payment
  *
  * Run:
  *   export BASE_RPC_URL=https://mainnet.base.org
- *   npx hardhat test test/PinionOsForkTest.ts --network baseFork
+ *   npx hardhat test tests/unit/base-mainnet/pinion-os/hardhat-3/PinionOsExample.t.ts --network baseFork
  */
 
 import { describe, it, before } from "node:test";
@@ -37,52 +21,40 @@ import {
   concat,
   toHex,
   parseEther,
-  encodePacked,
   hexToBytes,
+  toBytes,
 } from "viem";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants — Base mainnet
+// Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Native USDC on Base (Circle, 6 decimals) */
-const USDC_ADDRESS: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-
-/** Base mainnet chain ID */
-const BASE_CHAIN_ID = 8453n;
-
-/** Pinion skill cost: $0.01 USDC = 10_000 (6 decimals) */
-const PINION_SKILL_COST = 10_000n;
-
-/** Pinion unlimited plan: $100 USDC = 100_000_000 (6 decimals) */
-const PINION_UNLIMITED_COST = 100_000_000n;
-
-/**
- * Pinion payment recipient.
- * Replace with the real pinionos.com payTo address when known.
- */
-const PINION_PAYTO: Address = "0xf9c9A7735aaB3C665197725A3aFC095fE2635d09";
-
-/**
- * Test user private key (Hardhat/Anvil default account #0 — safe for tests).
- * mirrors `new Wallet(privateKey)` in the TypeScript example.
- */
-const USER_PRIV_KEY: Hex =
+const USDC_ADDRESS: Address  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_CHAIN_ID           = 8453n;
+const PINION_SKILL_COST       = 10_000n;       // $0.01 USDC (6 decimals)
+const PINION_UNLIMITED_COST   = 100_000_000n;  // $100 USDC (6 decimals)
+const PINION_PAYTO: Address   = "0xf9c9A7735aaB3C665197725A3aFC095fE2635d09";
+const USER_PRIV_KEY: Hex      =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Minimal USDC ABI — only the EIP-3009 surface we need
+// Minimal USDC ABI
 // ─────────────────────────────────────────────────────────────────────────────
 const USDC_ABI = [
-  // ERC-20
   {
     name: "balanceOf",
     type: "function",
     stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
+    inputs:  [{ name: "account", type: "address" }],
+    outputs: [{ name: "",        type: "uint256"  }],
   },
-  // EIP-3009: TransferWithAuthorization
+  {
+    name: "transfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs:  [{ name: "to", type: "address" }, { name: "value", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
   {
     name: "transferWithAuthorization",
     type: "function",
@@ -100,26 +72,22 @@ const USDC_ABI = [
     ],
     outputs: [],
   },
-  // EIP-3009: authorizationState
   {
     name: "authorizationState",
     type: "function",
     stateMutability: "view",
-    inputs: [
-      { name: "authorizer", type: "address" },
-      { name: "nonce",      type: "bytes32" },
-    ],
+    inputs:  [{ name: "authorizer", type: "address" }, { name: "nonce", type: "bytes32" }],
     outputs: [{ name: "", type: "bool" }],
   },
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// EIP-712 / EIP-3009 helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Build an EIP-3009 TransferWithAuthorization digest.
- * Domain: USDC on Base mainnet (name="USD Coin", version="2", chainId=8453).
+ * Build a raw EIP-712 digest for TransferWithAuthorization.
+ * Does NOT add any EIP-191 prefix — the result is fed directly to a raw secp256k1 sign.
  */
 function buildEIP3009Digest(params: {
   from:        Address;
@@ -131,159 +99,103 @@ function buildEIP3009Digest(params: {
 }): Hex {
   const { from, to, value, validAfter, validBefore, nonce } = params;
 
-  // EIP-712 domain typehash
-  const DOMAIN_TYPEHASH = keccak256(
-    new TextEncoder().encode(
-      "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-    )
-  );
+  const enc = (s: string) => toBytes(s);   // UTF-8 encode, no extra prefix
 
-  // TransferWithAuthorization typehash (Circle FiatToken V2)
-  const TRANSFER_TYPEHASH = keccak256(
-    new TextEncoder().encode(
-      "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
-    )
-  );
+  const DOMAIN_TYPEHASH = keccak256(enc(
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+  ));
+  const TRANSFER_TYPEHASH = keccak256(enc(
+    "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+  ));
 
-  // Domain separator
-  const domainSeparator = keccak256(
-    encodeAbiParameters(
-      [
-        { type: "bytes32" },
-        { type: "bytes32" },
-        { type: "bytes32" },
-        { type: "uint256" },
-        { type: "address" },
-      ],
-      [
-        DOMAIN_TYPEHASH,
-        keccak256(new TextEncoder().encode("USD Coin")),
-        keccak256(new TextEncoder().encode("2")),
-        BASE_CHAIN_ID,
-        USDC_ADDRESS,
-      ]
-    )
-  );
+  const domainSeparator = keccak256(encodeAbiParameters(
+    [
+      { type: "bytes32" }, { type: "bytes32" }, { type: "bytes32" },
+      { type: "uint256" }, { type: "address" },
+    ],
+    [
+      DOMAIN_TYPEHASH,
+      keccak256(enc("USD Coin")),
+      keccak256(enc("2")),
+      BASE_CHAIN_ID,
+      USDC_ADDRESS,
+    ]
+  ));
 
-  // Struct hash
-  const structHash = keccak256(
-    encodeAbiParameters(
-      [
-        { type: "bytes32" },
-        { type: "address" },
-        { type: "address" },
-        { type: "uint256" },
-        { type: "uint256" },
-        { type: "uint256" },
-        { type: "bytes32" },
-      ],
-      [TRANSFER_TYPEHASH, from, to, value, validAfter, validBefore, nonce]
-    )
-  );
+  const structHash = keccak256(encodeAbiParameters(
+    [
+      { type: "bytes32" }, { type: "address" }, { type: "address" },
+      { type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "bytes32" },
+    ],
+    [TRANSFER_TYPEHASH, from, to, value, validAfter, validBefore, nonce]
+  ));
 
-  // EIP-191 + EIP-712 final digest: \x19\x01 ++ domainSeparator ++ structHash
+  // \x19\x01 + domainSeparator + structHash  (no extra keccak — this IS the final digest)
   return keccak256(concat(["0x1901", domainSeparator, structHash]));
 }
 
 /**
- * Sign an EIP-3009 digest with a raw private key using viem's walletClient.
- * Returns split (v, r, s) components.
+ * Sign a raw 32-byte digest WITHOUT any EIP-191 prefix.
+ *
+ * BUG FIXED: The previous version used walletClient.signMessage({ raw: ... })
+ * which internally prepends "\x19Ethereum Signed Message:\n32", producing a
+ * double-wrapped digest that Circle's FiatToken rejects with "invalid signature".
+ *
+ * Fix: use viem's `sign` action from `viem/accounts` which is a bare secp256k1
+ * sign over the digest bytes — exactly what EIP-3009 expects.
  */
-async function signEIP3009(
-  walletClient: WalletClient,
+async function signEIP3009Digest(
+  privateKey: Hex,
   digest: Hex
 ): Promise<{ v: number; r: Hex; s: Hex }> {
-  // viem sign() returns a 65-byte compact signature: r(32) + s(32) + v(1)
-  const sig = await walletClient.signMessage({
-    account: walletClient.account!,
-    message: { raw: hexToBytes(digest) },
-  });
-  // sig is 0x + 130 hex chars (65 bytes)
-  const r = `0x${sig.slice(2, 66)}`   as Hex;
-  const s = `0x${sig.slice(66, 130)}` as Hex;
-  const v = parseInt(sig.slice(130, 132), 16);
-  return { v, r, s };
-}
+  const { sign } = await import("viem/accounts");
 
-/**
- * Seed a wallet with USDC by impersonating the Circle treasury on the fork.
- * Mirrors Foundry's `deal(address(USDC), user, amount, true)`.
- *
- * Strategy: impersonate a known USDC whale on Base and transfer to recipient.
- */
-async function dealUSDC(
-  networkHelpers: Awaited<ReturnType<typeof hre.network.connect>>["networkHelpers"],
-  publicClient: PublicClient,
-  walletClient: WalletClient,
-  recipient: Address,
-  amount: bigint
-) {
-  // Well-funded USDC whale on Base (visible on-chain)
-  const whale: Address = "0x20FE51A9229EEf2cF8Ad9E89d91CAb9312cF3b7A";
+  // sign() does a raw secp256k1 sign — no EIP-191 prefix added
+  const sig = await sign({ hash: digest, privateKey });
 
-  await networkHelpers.impersonateAccount(whale);
-  await networkHelpers.setBalance(whale, parseEther("10"));
-
-  // Use the wallet client impersonating the whale
-  await walletClient.writeContract({
-    address: USDC_ADDRESS,
-    abi: [
-      {
-        name: "transfer",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-          { name: "to",    type: "address" },
-          { name: "value", type: "uint256" },
-        ],
-        outputs: [{ name: "", type: "bool" }],
-      },
-    ],
-    functionName: "transfer",
-    args: [recipient, amount],
-    account: whale,
-  });
+  return {
+    v: Number(sig.v),
+    r: sig.r,
+    s: sig.s,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Connect to the Base mainnet fork defined in hardhat.config.ts as "baseFork"
-// Each test file gets its own isolated network connection in Hardhat 3.
 const { viem, networkHelpers } = await hre.network.connect("baseFork");
 
 describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () => {
 
-  // ── Shared state across tests ─────────────────────────────────────────────
-  let userAddress:    Address;
-  let userWallet:     WalletClient;
-  let publicClient:   PublicClient;
+  let userAddress:  Address;
+  let publicClient: PublicClient;
 
   before(async () => {
-    // Build clients
     publicClient = await viem.getPublicClient();
 
-    // Import the test private key as a viem wallet account
-    // (mirrors `new Wallet(privateKey)` in the TypeScript example)
     const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(USER_PRIV_KEY);
-    userAddress   = account.address;
+    userAddress = privateKeyToAccount(USER_PRIV_KEY).address;
 
-    userWallet = await viem.getWalletClient(userAddress);
-
-    // Fund with ETH (mirrors needing ETH on Base for gas)
+    // Fund user with ETH and USDC
     await networkHelpers.setBalance(userAddress, parseEther("1"));
 
-    // Fund with 200 USDC via whale impersonation
-    // (mirrors Foundry's `deal(address(USDC), user, 200_000_000, true)`)
-    await dealUSDC(networkHelpers, publicClient, userWallet, userAddress, 200_000_000n);
+    // Seed USDC via whale impersonation (mirrors Foundry's deal())
+    const whale: Address = "0x20FE51A9229EEf2cF8Ad9E89d91CAb9312cF3b7A";
+    await networkHelpers.impersonateAccount(whale);
+    await networkHelpers.setBalance(whale, parseEther("10"));
 
-    // Confirm setup
+    const { request: transferReq } = await publicClient.simulateContract({
+      address: USDC_ADDRESS, abi: USDC_ABI,
+      functionName: "transfer", args: [userAddress, 200_000_000n],
+      account: whale,
+    });
+    const whaleWallet = await viem.getWalletClient(whale);
+    await whaleWallet.writeContract(transferReq);
+
     const ethBal  = await publicClient.getBalance({ address: userAddress });
     const usdcBal = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf",
-      args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
     console.log("=== setUp complete ===");
     console.log("User address  :", userAddress);
@@ -291,76 +203,18 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
     console.log("USDC balance  :", usdcBal.toString());
   });
 
-  // ── Helper: simulate a single $0.01 Pinion x402 payment ──────────────────
+  // ── Helper: simulate a single Pinion x402 skill payment ──────────────────
   async function simulatePinionSkillPayment(nonceIndex: number) {
     const nonce       = toHex(nonceIndex, { size: 32 }) as Hex;
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
     const digest = buildEIP3009Digest({
-      from:        userAddress,
-      to:          PINION_PAYTO,
-      value:       PINION_SKILL_COST,
-      validAfter:  0n,
-      validBefore,
-      nonce,
-    });
-
-    const { v, r, s } = await signEIP3009(userWallet, digest);
-
-    // Impersonate PINION_PAYTO — it calls transferWithAuthorization
-    await networkHelpers.impersonateAccount(PINION_PAYTO);
-    await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
-
-    await publicClient.simulateContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: "transferWithAuthorization",
-      args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
-      account: PINION_PAYTO,
-    }).then(({ request }) =>
-      userWallet.writeContract({ ...request, account: PINION_PAYTO })
-    );
-  }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Test 1 — balance skill
-  //   pinion.skills.balance(userAddress)
-  // ────────────────────────────────────────────────────────────────────────────
-  it("Test 1 — balance skill: reads correct ETH and USDC balances", async () => {
-    const ethBal = await publicClient.getBalance({ address: userAddress });
-    assert.equal(ethBal, parseEther("1"), "ETH balance should be 1 ETH as seeded");
-
-    const usdcBal = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
-    });
-    assert.equal(usdcBal, 200_000_000n, "USDC balance should be 200 USDC as seeded");
-
-    console.log("✅ Balance skill | ETH:", ethBal, "USDC:", usdcBal);
-  });
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Test 2 — wallet skill: EIP-3009 payment of $0.01 USDC
-  //   pinion.skills.wallet()
-  // ────────────────────────────────────────────────────────────────────────────
-  it("Test 2 — wallet skill: $0.01 USDC payment settles via EIP-3009", async () => {
-    const nonce       = toHex(1, { size: 32 }) as Hex;
-    const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
-
-    const userUsdcBefore  = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
-    });
-    const paytoUsdcBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [PINION_PAYTO],
-    });
-
-    const digest = buildEIP3009Digest({
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
-    const { v, r, s } = await signEIP3009(userWallet, digest);
+
+    // FIX: use raw sign(), NOT signMessage() which adds EIP-191 prefix
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -371,38 +225,78 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
       account: PINION_PAYTO,
     });
-    await userWallet.writeContract({ ...request, account: PINION_PAYTO });
+    const paytoWallet = await viem.getWalletClient(PINION_PAYTO);
+    await paytoWallet.writeContract(request);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Test 1 — balance skill
+  // ────────────────────────────────────────────────────────────────────────────
+  it("Test 1 — balance skill: reads correct ETH and USDC balances", async () => {
+    const ethBal = await publicClient.getBalance({ address: userAddress });
+    assert.equal(ethBal, parseEther("1"), "ETH balance should be 1 ETH");
+
+    const usdcBal = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
+    });
+    assert.equal(usdcBal, 200_000_000n, "USDC balance should be 200 USDC");
+
+    console.log("✅ Balance skill | ETH:", ethBal, "USDC:", usdcBal);
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Test 2 — wallet skill: EIP-3009 payment of $0.01 USDC
+  // ────────────────────────────────────────────────────────────────────────────
+  it("Test 2 — wallet skill: $0.01 USDC payment settles via EIP-3009", async () => {
+    const nonce       = toHex(1, { size: 32 }) as Hex;
+    const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+    const userUsdcBefore  = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
+    });
+    const paytoUsdcBefore = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO],
+    });
+
+    const digest = buildEIP3009Digest({
+      from: userAddress, to: PINION_PAYTO,
+      value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
+    });
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
+
+    await networkHelpers.impersonateAccount(PINION_PAYTO);
+    await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
+
+    const { request } = await publicClient.simulateContract({
+      address: USDC_ADDRESS, abi: USDC_ABI,
+      functionName: "transferWithAuthorization",
+      args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
+      account: PINION_PAYTO,
+    });
+    const paytoWallet = await viem.getWalletClient(PINION_PAYTO);
+    await paytoWallet.writeContract(request);
 
     const userUsdcAfter  = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
     const paytoUsdcAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [PINION_PAYTO],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO],
     });
 
-    assert.equal(
-      userUsdcAfter, userUsdcBefore - PINION_SKILL_COST,
-      "User USDC should decrease by skill cost"
-    );
-    assert.equal(
-      paytoUsdcAfter, paytoUsdcBefore + PINION_SKILL_COST,
-      "Pinion payTo should receive skill cost"
-    );
+    assert.equal(userUsdcAfter,  userUsdcBefore  - PINION_SKILL_COST, "User USDC decreases");
+    assert.equal(paytoUsdcAfter, paytoUsdcBefore + PINION_SKILL_COST, "payTo USDC increases");
 
-    // Nonce must be consumed (replay protection)
     const nonceUsed = await publicClient.readContract({
       address: USDC_ADDRESS, abi: USDC_ABI,
       functionName: "authorizationState", args: [userAddress, nonce],
     });
-    assert.equal(nonceUsed, true, "Authorization nonce must be consumed after use");
+    assert.equal(nonceUsed, true, "Nonce must be consumed");
 
     console.log("✅ Wallet skill | $0.01 USDC settled, nonce consumed");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 3 — wallet skill replay protection
+  // Test 3 — replay protection
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 3 — wallet skill: EIP-3009 nonce cannot be replayed", async () => {
     const nonce       = toHex(42, { size: 32 }) as Hex;
@@ -412,21 +306,22 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
-    const { v, r, s } = await signEIP3009(userWallet, digest);
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
+    const paytoWallet = await viem.getWalletClient(PINION_PAYTO);
 
-    // First payment — must succeed
+    // First — succeeds
     const { request } = await publicClient.simulateContract({
       address: USDC_ADDRESS, abi: USDC_ABI,
       functionName: "transferWithAuthorization",
       args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
       account: PINION_PAYTO,
     });
-    await userWallet.writeContract({ ...request, account: PINION_PAYTO });
+    await paytoWallet.writeContract(request);
 
-    // Second attempt with same nonce — must revert
+    // Second — must revert with nonce already used
     await assert.rejects(
       () => publicClient.simulateContract({
         address: USDC_ADDRESS, abi: USDC_ABI,
@@ -434,118 +329,82 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
         args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
         account: PINION_PAYTO,
       }),
-      "Replay with same nonce should revert"
+      "Replay with same nonce must revert"
     );
 
-    console.log("✅ Wallet skill | replay attempt correctly rejected");
+    console.log("✅ Wallet skill | replay correctly rejected");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 4 — chat skill: $0.01 USDC payment
-  //   pinion.skills.chat("what is x402?")
+  // Tests 4–7 — per-skill payment deductions
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 4 — chat skill: deducts $0.01 USDC", async () => {
-    const balanceBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const before = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-
     await simulatePinionSkillPayment(100);
-
-    const balanceAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const after = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-    assert.equal(balanceAfter, balanceBefore - PINION_SKILL_COST, "Chat skill deducts $0.01 USDC");
-
+    assert.equal(after, before - PINION_SKILL_COST);
     console.log("✅ Chat skill | $0.01 USDC deducted");
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Test 5 — price skill: $0.01 USDC payment
-  //   pinion.skills.price("ETH")
-  // ────────────────────────────────────────────────────────────────────────────
   it("Test 5 — price skill: deducts $0.01 USDC", async () => {
-    const balanceBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const before = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-
     await simulatePinionSkillPayment(200);
-
-    const balanceAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const after = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-    assert.equal(balanceAfter, balanceBefore - PINION_SKILL_COST, "Price skill deducts $0.01 USDC");
-
+    assert.equal(after, before - PINION_SKILL_COST);
     console.log("✅ Price skill | $0.01 USDC deducted");
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Test 6 — trade skill: $0.01 USDC payment
-  //   pinion.skills.trade("USDC", "ETH", "10")
-  // ────────────────────────────────────────────────────────────────────────────
   it("Test 6 — trade skill: deducts $0.01 USDC", async () => {
-    const balanceBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const before = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-
     await simulatePinionSkillPayment(300);
-
-    const balanceAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const after = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-    assert.equal(balanceAfter, balanceBefore - PINION_SKILL_COST, "Trade skill deducts $0.01 USDC");
-
+    assert.equal(after, before - PINION_SKILL_COST);
     console.log("✅ Trade skill | $0.01 USDC deducted");
   });
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Test 7 — fund skill: $0.01 USDC payment
-  //   pinion.skills.fund(userAddress)
-  // ────────────────────────────────────────────────────────────────────────────
   it("Test 7 — fund skill: deducts $0.01 USDC", async () => {
-    const balanceBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const before = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-
     await simulatePinionSkillPayment(400);
-
-    const balanceAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+    const after = await publicClient.readContract({
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
-    assert.equal(balanceAfter, balanceBefore - PINION_SKILL_COST, "Fund skill deducts $0.01 USDC");
-
+    assert.equal(after, before - PINION_SKILL_COST);
     console.log("✅ Fund skill | $0.01 USDC deducted");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 8 — unlimited plan: $100 USDC one-time payment
-  //   pinion.skills.unlimited()
+  // Test 8 — unlimited plan: $100 USDC
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 8 — unlimited plan: settles exactly $100 USDC", async () => {
     const nonce       = toHex(9999, { size: 32 }) as Hex;
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
     const userUsdcBefore  = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
     const paytoUsdcBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [PINION_PAYTO],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO],
     });
 
     const digest = buildEIP3009Digest({
       from: userAddress, to: PINION_PAYTO,
       value: PINION_UNLIMITED_COST, validAfter: 0n, validBefore, nonce,
     });
-    const { v, r, s } = await signEIP3009(userWallet, digest);
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -556,39 +415,35 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       args: [userAddress, PINION_PAYTO, PINION_UNLIMITED_COST, 0n, validBefore, nonce, v, r, s],
       account: PINION_PAYTO,
     });
-    await userWallet.writeContract({ ...request, account: PINION_PAYTO });
+    const paytoWallet = await viem.getWalletClient(PINION_PAYTO);
+    await paytoWallet.writeContract(request);
 
     const userUsdcAfter  = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
     const paytoUsdcAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [PINION_PAYTO],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [PINION_PAYTO],
     });
 
-    assert.equal(
-      userUsdcAfter, userUsdcBefore - PINION_UNLIMITED_COST,
-      "Unlimited plan must deduct exactly $100 USDC"
-    );
-    assert.equal(
-      paytoUsdcAfter, paytoUsdcBefore + PINION_UNLIMITED_COST,
-      "Pinion payTo must receive exactly $100 USDC"
-    );
+    assert.equal(userUsdcAfter,  userUsdcBefore  - PINION_UNLIMITED_COST, "User pays $100");
+    assert.equal(paytoUsdcAfter, paytoUsdcBefore + PINION_UNLIMITED_COST, "payTo receives $100");
 
     console.log("✅ Unlimited plan | $100 USDC settled");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 9 — insufficient funds guard
-  //   Mirrors: error: 'insufficient_funds' in the 402 response
+  // Test 9 — insufficient funds
+  //
+  // BUG FIXED: The previous version called viem.getWalletClient(brokeAddress)
+  // which requires the address to already be an unlocked account in the node.
+  // For an arbitrary private key, we must use privateKeyToAccount + sign directly.
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 9 — insufficient funds: payment reverts with 0 USDC", async () => {
-    const { privateKeyToAccount } = await import("viem/accounts");
     const brokeKey: Hex =
       "0xbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbad0";
-    const brokeAccount = privateKeyToAccount(brokeKey);
-    const brokeAddress = brokeAccount.address;
+
+    const { privateKeyToAccount } = await import("viem/accounts");
+    const brokeAddress = privateKeyToAccount(brokeKey).address;
 
     await networkHelpers.setBalance(brokeAddress, parseEther("1"));
     // No USDC for brokeAddress
@@ -601,10 +456,8 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       value: PINION_SKILL_COST, validAfter: 0n, validBefore, nonce,
     });
 
-    // Sign with broke key (need a temp wallet client)
-    const brokeWallet = await viem.getWalletClient(brokeAddress);
-    await networkHelpers.impersonateAccount(brokeAddress);
-    const { v, r, s } = await signEIP3009(brokeWallet, digest);
+    // FIX: sign directly with the broke private key — no wallet client needed
+    const { v, r, s } = await signEIP3009Digest(brokeKey, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
 
@@ -615,24 +468,24 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
         args: [brokeAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, validBefore, nonce, v, r, s],
         account: PINION_PAYTO,
       }),
-      "Payment from broke user should revert"
+      "Payment from broke user must revert"
     );
 
-    console.log("✅ Insufficient funds | payment correctly rejected");
+    console.log("✅ Insufficient funds | correctly rejected");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
   // Test 10 — expired authorization
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 10 — expired authorization: validBefore in the past reverts", async () => {
-    const nonce      = toHex(600, { size: 32 }) as Hex;
-    const expiredTs  = BigInt(Math.floor(Date.now() / 1000) - 1); // already expired
+    const nonce     = toHex(600, { size: 32 }) as Hex;
+    const expiredTs = BigInt(Math.floor(Date.now() / 1000) - 10);
 
     const digest = buildEIP3009Digest({
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter: 0n, validBefore: expiredTs, nonce,
     });
-    const { v, r, s } = await signEIP3009(userWallet, digest);
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
 
@@ -643,58 +496,56 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
         args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, 0n, expiredTs, nonce, v, r, s],
         account: PINION_PAYTO,
       }),
-      "Expired authorization should revert"
+      "Expired authorization must revert"
     );
 
     console.log("✅ Expired authorization | correctly rejected");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 11 — full example flow (cumulative cost)
-  //   mirrors entire main() function: wallet + price + chat + trade + fund
-  //   = 5 × $0.01 = $0.05 USDC
+  // Test 11 — full example flow: 5 skills = $0.05 USDC
   // ────────────────────────────────────────────────────────────────────────────
   it("Test 11 — full example flow: 5 skills = $0.05 USDC total", async () => {
     const usdcBefore = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
 
-    const SKILL_COUNT = 5n;
-    for (let i = 1n; i <= SKILL_COUNT; i++) {
-      await simulatePinionSkillPayment(Number(i * 1000n));
+    for (let i = 1; i <= 5; i++) {
+      await simulatePinionSkillPayment(i * 1000);
     }
 
     const usdcAfter = await publicClient.readContract({
-      address: USDC_ADDRESS, abi: USDC_ABI,
-      functionName: "balanceOf", args: [userAddress],
+      address: USDC_ADDRESS, abi: USDC_ABI, functionName: "balanceOf", args: [userAddress],
     });
 
-    const expected = SKILL_COUNT * PINION_SKILL_COST; // 50_000 = $0.05
-    assert.equal(
-      usdcAfter, usdcBefore - expected,
-      "Full example flow should cost $0.05 USDC total"
-    );
-
-    console.log("✅ Full example flow | total deducted:", expected.toString(), "units (=$0.05)");
+    assert.equal(usdcAfter, usdcBefore - 5n * PINION_SKILL_COST, "5 skills = $0.05 total");
+    console.log("✅ Full flow | total deducted: 50000 USDC units (=$0.05)");
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Test 12 — time manipulation: validAfter window
-  //   EIP-3009 allows setting validAfter; payment can't be used before it.
-  //   Mirrors Foundry's `vm.warp(...)`.
+  // Test 12 — validAfter: time window enforcement
+  //
+  // BUG FIXED: The previous version used Date.now() for validAfter, which is
+  // wall-clock time. After networkHelpers.time.increase() the EVM block timestamp
+  // advances, but the digest was signed against the old validAfter value computed
+  // from Date.now() BEFORE time.increase(). We must use the EVM's block.timestamp
+  // as the baseline, not Date.now(), so that validAfter and the post-warp block
+  // timestamp are consistent.
   // ────────────────────────────────────────────────────────────────────────────
-  it("Test 12 — validAfter: payment blocked before window, succeeds after time.increase", async () => {
-    const nonce       = toHex(700, { size: 32 }) as Hex;
-    const now         = BigInt(Math.floor(Date.now() / 1000));
-    const validAfter  = now + 3600n; // 1 hour in the future
-    const validBefore = now + 7200n; // 2 hours in the future
+  it("Test 12 — validAfter: blocked before window, succeeds after time.increase", async () => {
+    const nonce = toHex(700, { size: 32 }) as Hex;
+
+    // FIX: use the EVM block timestamp as baseline — not Date.now()
+    const block       = await publicClient.getBlock();
+    const evmNow      = block.timestamp;                // current EVM time (bigint, seconds)
+    const validAfter  = evmNow + 3600n;                 // 1 hour ahead in EVM time
+    const validBefore = evmNow + 7200n;                 // 2 hours ahead in EVM time
 
     const digest = buildEIP3009Digest({
       from: userAddress, to: PINION_PAYTO,
       value: PINION_SKILL_COST, validAfter, validBefore, nonce,
     });
-    const { v, r, s } = await signEIP3009(userWallet, digest);
+    const { v, r, s } = await signEIP3009Digest(USER_PRIV_KEY, digest);
 
     await networkHelpers.impersonateAccount(PINION_PAYTO);
     await networkHelpers.setBalance(PINION_PAYTO, parseEther("1"));
@@ -707,11 +558,11 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
         args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, validAfter, validBefore, nonce, v, r, s],
         account: PINION_PAYTO,
       }),
-      "Payment before validAfter should revert"
+      "Must revert before validAfter"
     );
 
-    // Warp time past validAfter (mirrors Foundry's vm.warp)
-    await networkHelpers.time.increase(3601); // +1 hour + 1 second
+    // Advance EVM time past validAfter (mirrors Foundry's vm.warp)
+    await networkHelpers.time.increase(3601);
 
     // After validAfter — must succeed
     const { request } = await publicClient.simulateContract({
@@ -720,13 +571,14 @@ describe("PinionOsForkTest — Base mainnet fork (Hardhat 3 / viem)", async () =
       args: [userAddress, PINION_PAYTO, PINION_SKILL_COST, validAfter, validBefore, nonce, v, r, s],
       account: PINION_PAYTO,
     });
-    await userWallet.writeContract({ ...request, account: PINION_PAYTO });
+    const paytoWallet = await viem.getWalletClient(PINION_PAYTO);
+    await paytoWallet.writeContract(request);
 
     const nonceUsed = await publicClient.readContract({
       address: USDC_ADDRESS, abi: USDC_ABI,
       functionName: "authorizationState", args: [userAddress, nonce],
     });
-    assert.equal(nonceUsed, true, "Nonce should be consumed after successful payment");
+    assert.equal(nonceUsed, true, "Nonce consumed after valid window");
 
     console.log("✅ validAfter | blocked before window, succeeded after time.increase");
   });
