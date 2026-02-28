@@ -7,16 +7,25 @@ import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
 // ─────────────────────────────────────────────────────────────────────────────
 // Hardhat 3 config — Pinion OS fork tests
 //
-// KEY DIFFERENCES from Hardhat 2:
-//   ✗  type: "hardhat"      → does NOT exist in Hardhat 3
-//   ✗  networks.hardhat: {} → Hardhat 2 only; causes HHE15 in Hardhat 3
-//   ✓  type: "edr-simulated" → correct Hardhat 3 value for in-process simulations
-//   ✓  type: "http"          → correct Hardhat 3 value for external JSON-RPC nodes
-//   ✓  The built-in "default" network is always edr-simulated; no need to declare it
+// KEY FIXES applied here:
+//
+// FIX 1 — blockNumber removed (hardfork history error)
+//   EDR error: "No known hardfork for execution on historical block 28000000
+//   in chain with id 8453. The node was not configured with a hardfork
+//   activation history."
+//   Root cause: EDR doesn't know Base's OP-stack hardfork schedule. Pinning
+//   blockNumber forces EDR to execute AT that exact block, which requires the
+//   full hardfork activation history for chainId 8453 — not available in EDR.
+//   Fix: remove blockNumber entirely. EDR forks from "latest" which it handles
+//   correctly. Tests remain deterministic enough for payment-flow checks.
+//
+// FIX 2 — chainType: "l2" added
+//   Tells EDR this is an OP-stack L2. Without this, EDR applies Ethereum L1
+//   hardfork rules to Base, which can cause subtle execution differences.
 //
 // Run:
 //   export BASE_RPC_URL=https://mainnet.base.org
-//   npx hardhat test test/PinionOsForkTest.ts --network baseFork
+//   npx hardhat test tests/unit/base-mainnet/pinion-os/hardhat-3/PinionOsExample.t.ts --network baseFork
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default defineConfig({
@@ -32,22 +41,19 @@ export default defineConfig({
   },
 
   networks: {
-    // ── Base mainnet fork ─────────────────────────────────────────────────────
-    // type: "edr-simulated" = in-process EDR simulation that forks a remote chain.
-    // This is the only correct value for simulated networks in Hardhat 3.
-    // Do NOT use type: "hardhat" — that key does not exist in Hardhat 3.
     baseFork: {
       type: "edr-simulated",
+      chainType: "op",   // ✅ Base is OP-stack
       forking: {
         url: process.env.BASE_RPC_URL ?? "https://mainnet.base.org",
-        blockNumber: 28_000_000, // pin for reproducibility
+        // no blockNumber
       },
     },
   },
 
   paths: {
-    sources:   "./contracts",
-    tests:     "./tests",
+    sources: "./contracts",
+    tests: "./tests",
     artifacts: "./artifacts",
   },
 });
