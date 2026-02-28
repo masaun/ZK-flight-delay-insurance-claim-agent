@@ -326,8 +326,8 @@ async function generateZKProofOffChain(): Promise<{
   //
   // For a real application each user's salt would be stored in a database; for
   // this E2E test we use a fixed value so the tree is always identical.
-  const salt   = 936363922n; // fixed — change only to re-register a new policy
-  const policyId = 1;
+  const salt = 936363922n; // fixed — change only to re-register a new policy
+  const policyId = 2;
 
   const passengerNameHash = BigInt(
     "0x" + Buffer.from("Alice Johnson").toString("hex").padStart(64, "0").slice(0, 64)
@@ -587,6 +587,7 @@ async function submitClaimOnChain(
     abi: FLIGHT_DELAY_INSURANCE_ABI,
     functionName: "claim",
     args: [BigInt(policyId), proofHex, publicInputsHex],
+    gas: 6_000_000n
   });
 
   console.log(`   Transaction submitted: ${txHash}`);

@@ -2,13 +2,32 @@ import "dotenv/config";
 import { PinionClient } from "pinion-os";
 import { Wallet } from "ethers";
 
+// @dev - Node modules for file system and path handling, used to load .env files from the contracts directory
+import { config } from "dotenv";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+// ─────────────────────────────────────────────
+// Load .env files
+// ─────────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const envPath = resolve(__dirname, "../../../../../contracts/.env");
+
+const resultEnv = config({ path: envPath });
+if (resultEnv.error) {
+  console.error("❌ Error loading .env file:", resultEnv.error);
+  throw resultEnv.error;
+}
+
+
 async function main() {
   const pinion = new PinionClient({
-    privateKey: process.env.PINION_PRIVATE_KEY,
+    privateKey: process.env.USER_PRIVATE_KEY // @dev - NOTE: Only "Base Mainnet" would be allowed.
   });
 
   // Get the wallet address from the private key
-  const wallet = new Wallet(process.env.PINION_PRIVATE_KEY!);
+  const wallet = new Wallet(process.env.USER_PRIVATE_KEY!);
   const userAddress = wallet.address;
   console.log("User Wallet Address:", userAddress);
 
