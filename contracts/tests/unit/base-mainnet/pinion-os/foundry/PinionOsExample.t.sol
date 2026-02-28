@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -34,7 +34,7 @@ interface IUSDC is IERC20 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PinionOsForkTest
+// Pinion OS: Example contract test - using Base mainnet-forking test of Founry
 //
 // Mirrors every skill call made in the Pinion OS TypeScript example:
 //   pinion.skills.wallet()        → wallet generation (x402 payment)
