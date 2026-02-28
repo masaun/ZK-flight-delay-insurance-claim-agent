@@ -40,3 +40,24 @@ forge test --fork-url https://mainnet.base.org --fork-block-number 28000000 -vvv
 <br>
 
 ## Smart contract deployment
+
+<br>
+
+## References
+
+- ZK circuit in `Noir` (powered by `Aztec`)
+  - [Noir Documentation](https://noir-lang.org/)
+  - [Barretenberg Documentation](https://aztecprotocol.github.io/barretenberg/)
+  - `noir-examples/solidity-example`
+    - `js/generate-proof.ts` (How to use the `verifierTarget: "evm"`): https://github.com/noir-lang/noir-examples/blob/master/solidity-example/js/generate-proof.ts#L16
+
+  - Recursive Proof:
+    - Doc：https://barretenberg.aztec.network/docs/explainers/recursive_aggregation/
+    - `noir-examples/recursion`：https://github.com/noir-lang/noir-examples/tree/master/recursion
+
+<br>
+
+- Pinion OS:
+  - https://pinionos.com/
+  - https://github.com/chu2bard/pinion-os
+
