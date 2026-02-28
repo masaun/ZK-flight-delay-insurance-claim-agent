@@ -9,10 +9,9 @@ target
 
 # Node modules
 node_modules/
-package-lock.json
-yarn.lock
-bun.lockb
-pnpm-lock.yaml
+**-lock.json
+**.lock
+**.lockb
 
 # Others
 .DS_Store
