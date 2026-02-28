@@ -1,0 +1,21 @@
+{
+  "name": "pinion-os-hardhat3-fork-test",
+  "version": "1.0.0",
+  "description": "Hardhat 3 Base mainnet fork tests for Pinion OS x402 payment flow",
+  "type": "module",
+  "scripts": {
+    "test":      "npx hardhat test tests/unit/base-mainnet/pinion-os/hardhat-3/PinionOsExample.t.sol --network baseFork",
+    "test:all":  "npx hardhat test --network baseFork",
+    "build":     "npx hardhat build"
+  },
+  "devDependencies": {
+    "hardhat":                                       "^3.0.0",
+    "@nomicfoundation/hardhat-viem":                 "^3.0.0",
+    "@nomicfoundation/hardhat-viem-assertions":      "^3.0.0",
+    "@nomicfoundation/hardhat-node-test-runner":     "^3.0.0",
+    "@nomicfoundation/hardhat-network-helpers":      "^3.0.0",
+    "viem":                                          "^2.0.0",
+    "typescript":                                    "^5.0.0",
+    "@types/node":                                   "^20.0.0"
+  }
+}
