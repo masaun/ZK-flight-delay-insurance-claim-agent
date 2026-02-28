@@ -1,7 +1,7 @@
 # ZK flight delay insurance claim agent - Smart Contract
 
 
-## Run the smart contract test with Foundry (using `Base mainnet-forking` method)
+## Run the smart contract test with `Foundry` and `Hardhat` (using `Base mainnet-forking` method)
 
 - 1/ Set the `RPC URL` of Base mainnet in the `.env` file
 ```bash
@@ -16,9 +16,9 @@ export BASE_RPC_URL=https://mainnet.base.org
 ```
 
 
-- 2/ Run the `PinionOsExample.sol`
+- 2/ Run the `PinionOsExample.sol` with **`Foundry`** (using `Base mainnet-forking` method)
 ```bash
-cd contracts/tests/unit/base-mainnet/pinion-os
+cd contracts/tests/unit/base-mainnet/pinion-os/foundry
 
 sh PinionOsExample.t.sh
 ```
@@ -35,6 +35,15 @@ Or,
 
 # 2.Run a single test using BASE mainnet RPC URL, which is manually set
 forge test --fork-url https://mainnet.base.org --fork-block-number 28000000 -vvvv
+```
+
+<br>
+
+- 2/ Run the `PinionOsExample.sol` with **`Hardhat 3`** (using `Base mainnet-forking` method)
+```bash
+cd contracts/tests/unit/base-mainnet/pinion-os/hardhat-3
+
+sh PinionOsExample.t.sh
 ```
 
 <br>
