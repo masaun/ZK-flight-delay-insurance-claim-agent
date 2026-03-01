@@ -2,7 +2,7 @@
 
 ## Overview
 
-- ZK flight delay insurance claim agent built on **[`Noir`](https://noir-lang.org/docs/) ZK circuit** and [`Pinion OS`](https://github.com/chu2bard/pinion-os), which an AI agent buy a insurance policy for a flight delay insurance and claim it (when a flight delay happen) **on behalf of** a user.
+- ZK flight delay insurance claim agent built on **[`Noir`](https://noir-lang.org/docs/) ZK circuit**, which an AI agent buy a insurance policy for a flight delay insurance and claim it (when a flight delay happen) **on behalf of** a user.
 
 
 - This project is still **IN PROGRESS**.
@@ -23,10 +23,6 @@
 - **Blockchain**: 
    - e2e script: Base Sepolia
    - Smart contract test: Base mainnet-forking test using [Foundry's `mainnet-forking` method](https://www.getfoundry.sh/guides/fork-testing).
-
-- AI Agent framework:
-   - [Pinion OS](https://pinionos.com/): 
-      > Client SDK, Claude plugin and skill framework for the Pinion protocol. x402 micropayments on Base.
 
 <br>
 
@@ -63,9 +59,4 @@ sh e2e.sh
     - Doc：https://barretenberg.aztec.network/docs/explainers/recursive_aggregation/
     - `noir-examples/recursion`：https://github.com/noir-lang/noir-examples/tree/master/recursion
 
-<br>
-
-- Pinion OS:
-  - https://pinionos.com/
-  - https://github.com/chu2bard/pinion-os
 
