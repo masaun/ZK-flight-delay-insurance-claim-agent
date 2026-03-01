@@ -2,9 +2,10 @@
 
 ## Overview
 
-- ZK flight delay insurance claim agent using Noir ZK circuit and Pinion OS.
+- ZK flight delay insurance claim agent built on **`Noir` ZK circuit** and `Pinion OS`, which an AI agent buy a insurance policy for a flight delay insurance and claim it (when a flight delay happen) **on behalf of** a user.
 
-- This project is still in progress.
+
+- This project is still **IN PROGRESS**.
 
 <br>
 
