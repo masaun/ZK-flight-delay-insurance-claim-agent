@@ -5,7 +5,7 @@ import hardhatNodeTestRunner from "@nomicfoundation/hardhat-node-test-runner";
 import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hardhat 3 config — Pinion OS fork tests
+// Hardhat 3 config - Base mainnet forking tests
 //
 // KEY FIXES applied here:
 //
