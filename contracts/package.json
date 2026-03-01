@@ -1,10 +1,9 @@
 {
-  "name": "pinion-os-hardhat3-fork-test",
+  "name": "hardhat3-base-mainnet-forking-test",
   "version": "1.0.0",
-  "description": "Hardhat 3 Base mainnet fork tests for Pinion OS x402 payment flow",
+  "description": "Hardhat 3 Base mainnet fork tests for x402 payment flow",
   "type": "module",
   "scripts": {
-    "test":      "npx hardhat test tests/unit/base-mainnet/pinion-os/hardhat-3/PinionOsExample.t.sol --network baseFork",
     "test:all":  "npx hardhat test --network baseFork",
     "build":     "npx hardhat build"
   },
